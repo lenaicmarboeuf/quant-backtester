@@ -5,17 +5,12 @@ import pandas as pd
 def download_data(ticker: str, start: str, end: str) -> pd.DataFrame:
     """
     Télécharge les données OHLCV ajustées pour un ticker donné.
-
-    Args:
-        ticker : symbole boursier, ex. 'AAPL', 'BNP.PA'
-        start  : date de début au format 'YYYY-MM-DD'
-        end    : date de fin au format 'YYYY-MM-DD'
-
-    Returns:
-        DataFrame avec colonnes Open, High, Low, Close, Volume
-        et un index DatetimeIndex.
     """
     df = yf.download(ticker, start=start, end=end, auto_adjust=True, progress=False)
+
+    # Correction yfinance récent : aplatir le MultiIndex des colonnes
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
 
     # Nettoyage : supprimer les lignes sans prix de clôture
     df = df.dropna(subset=["Close"])
@@ -27,16 +22,13 @@ def download_data(ticker: str, start: str, end: str) -> pd.DataFrame:
 
 
 def compute_returns(df: pd.DataFrame) -> pd.DataFrame:
-    """Ajoute une colonne 'returns' = rendement journalier en %."""
+    """Ajoute une colonne 'returns' = rendement journalier."""
     df = df.copy()
     df["returns"] = df["Close"].pct_change()
     return df
 
 
 if __name__ == "__main__":
-    # Test rapide
     data = download_data("AAPL", "2020-01-01", "2024-01-01")
     data = compute_returns(data)
     print(data.tail(10))
-    print(f"\nShape : {data.shape}")
-    print(f"Colonnes : {list(data.columns)}")
