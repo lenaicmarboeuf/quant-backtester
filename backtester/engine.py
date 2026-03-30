@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 from data.loader import download_data, compute_returns
-
+from backtester.metrics import full_metrics
 
 class Backtester:
     """
@@ -101,56 +101,10 @@ class Backtester:
         return results
 
     def compute_metrics(self, results: pd.DataFrame) -> dict:
-        """
-        Calcule les métriques clés de performance.
-
-        CAGR (Compound Annual Growth Rate) :
-            Taux de croissance annuel composé.
-            Formule : (valeur_finale / valeur_initiale) ^ (1/nb_années) - 1
-            252 = nombre de jours de bourse dans une année
-
-        Sharpe ratio :
-            Rendement moyen / risque (écart-type des rendements)
-            Annualisé en multipliant par √252
-            > 1.0 = acceptable, > 1.5 = bon, > 2.0 = excellent
-
-        Max drawdown :
-            Pire perte depuis un sommet.
-            cummax() : valeur maximale atteinte jusqu'à ce jour
-            drawdown = (valeur_actuelle - sommet) / sommet
-            Le minimum de cette série = le pire drawdown
-
-        Args:
-            results : DataFrame retourné par compute_pnl()
-
-        Returns:
-            dict avec les métriques principales
-        """
-        returns = results["strategy_returns"].dropna()
-        equity = results["equity_curve"]
-
-        # Nombre d'années
-        n_years = len(returns) / 252
-
-        # CAGR
-        total_return = equity.iloc[-1] / self.initial_capital
-        cagr = total_return ** (1 / n_years) - 1
-
-        # Sharpe (sans taux sans risque pour simplifier)
-        sharpe = (returns.mean() / returns.std()) * np.sqrt(252)
-
-        # Max drawdown
-        rolling_max = equity.cummax()
-        drawdown = (equity - rolling_max) / rolling_max
-        max_drawdown = drawdown.min()
-
-        return {
-            "CAGR": round(cagr * 100, 2),
-            "Sharpe": round(sharpe, 2),
-            "Max Drawdown": round(max_drawdown * 100, 2),
-            "Capital final": round(equity.iloc[-1], 2),
-            "Nb jours tradés": int(results["position"].sum()),
-        }
+        return full_metrics(
+            returns=results["strategy_returns"],
+            equity=results["equity_curve"]
+        )
 
     def run(self, window: int = 20) -> dict:
         """
