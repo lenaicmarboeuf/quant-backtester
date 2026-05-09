@@ -71,7 +71,8 @@ class Backtester:
     def compute_metrics(self, results: pd.DataFrame) -> dict:
         return full_metrics(
             returns=results['strategy_returns'],
-            equity=results['equity_curve']
+            equity=results['equity_curve'],
+            position=results['position'] 
         )
 
     def run(self,

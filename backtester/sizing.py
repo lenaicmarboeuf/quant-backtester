@@ -238,14 +238,13 @@ def atr_stop(
 
     return result[['atr', 'stop_level', 'position_atr']]
 
-
 def compare_sizing_modes(
     df: pd.DataFrame,
     signal: pd.Series,
     initial_capital: float = 10_000.0
 ) -> pd.DataFrame:
     """
-    Compare les 4 modes de sizing sur la même période.
+    Compare les 5 modes de sizing sur la même période.
 
     Calcule la courbe de capital pour chaque mode et retourne
     un DataFrame avec les equity curves côte à côte.
@@ -258,7 +257,7 @@ def compare_sizing_modes(
     Returns:
         DataFrame avec colonnes :
             'equity_binary', 'equity_vol', 'equity_kelly',
-            'equity_proportional', 'equity_atr'
+            'equity_fixed', 'equity_proportional', 'equity_atr'
     """
     results = pd.DataFrame(index=df.index)
 
@@ -280,11 +279,15 @@ def compare_sizing_modes(
     pos_kelly = kelly_size(df['returns'], signal)
     results['equity_kelly'] = equity_from_position(pos_kelly)
 
-    # 4. Signal proportionnel
+    # 4. Fixed fraction (fraction=1.0 pour comparer à iso-échelle)
+    pos_fixed = fixed_fraction(signal, fraction=1.0)
+    results['equity_fixed'] = equity_from_position(pos_fixed)
+
+    # 5. Signal proportionnel
     pos_prop = signal_proportional_size(signal, df['returns'])
     results['equity_proportional'] = equity_from_position(pos_prop)
 
-    # 5. ATR stop (vol-targeting comme base)
+    # 6. ATR stop (direction du signal comme base)
     atr_result = atr_stop(df, signal)
     pos_atr    = atr_result['position_atr']
     results['equity_atr'] = equity_from_position(pos_atr)
