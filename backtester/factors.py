@@ -349,22 +349,21 @@ def fama_french_alpha(
     risk_free: float = 0.0,
 ) -> dict:
     """
-    Régression simple CAPM pour isoler l'alpha de la stratégie.
+    Régression CAPM (1 facteur) pour isoler l'alpha de la stratégie.
 
     Modèle :
-        R_strat - Rf = α + β × (R_mkt - Rf) + ε
+        R_strat - Rf = alpha + beta × (R_mkt - Rf) + epsilon
 
-    Si α est positif et statistiquement significatif (p < 0.05) :
-        → La stratégie génère de la valeur APRÈS avoir compensé
-          l'exposition au marché. C'est la vraie valeur ajoutée.
+    Le test de significativité porte sur ALPHA (l'intercept) :
+        t_alpha = alpha / se(alpha)
+        se(alpha) = sqrt( sigma² × (1/n + x_moy² / Sxx) )
+    La p-value est bilatérale, loi de Student à n-2 degrés de liberté.
 
-    Si α ≈ 0 :
-        → La stratégie ne fait que capter la prime de risque du marché.
-          Un simple ETF S&P500 ferait pareil avec moins de frais.
+    Si alpha > 0 et p < 0.05 : valeur ajoutée au-delà de l'exposition au marché.
+    Si alpha ≈ 0             : la stratégie ne fait que capter le marché (beta).
 
-    Note : version simplifiée (CAPM à 1 facteur). Pour Fama-French
-    complet (3 ou 5 facteurs), utiliser pandas_datareader pour
-    télécharger SMB, HML, RMW, CMA depuis le site de Kenneth French.
+    Note : CAPM seulement. Le vrai Fama-French (SMB, HML...) demande les
+    facteurs de Kenneth French et statsmodels (voir séance suivante).
 
     Args:
         strategy_returns : rendements journaliers de la stratégie
@@ -372,40 +371,47 @@ def fama_french_alpha(
         risk_free        : taux sans risque journalier (défaut 0)
 
     Returns:
-        dict avec alpha, beta, r_squared, p_value_alpha, t_stat_alpha
+        dict avec alpha, beta, R², p-value et t-stat de l'alpha
     """
-    try:
-        from scipy import stats as sp_stats
-    except ImportError:
-        return {"error": "scipy requis pour la régression CAPM"}
+    combined = pd.DataFrame({
+        "strat": strategy_returns - risk_free,
+        "mkt":   market_returns - risk_free,
+    }).dropna()
 
-    # Excès de rendement
-    excess_strat  = strategy_returns - risk_free
-    excess_market = market_returns - risk_free
-
-    # Alignement
-    combined = pd.DataFrame({"strat": excess_strat, "mkt": excess_market}).dropna()
-
-    if len(combined) < 30:
+    n = len(combined)
+    if n < 30:
         return {"error": "Pas assez de données (minimum 30 observations)"}
 
-    y = combined["strat"].values
-    x = combined["mkt"].values
+    y = combined["strat"].to_numpy(dtype=float)
+    x = combined["mkt"].to_numpy(dtype=float)
 
-    slope, intercept, r_value, p_value, std_err = sp_stats.linregress(x, y)
+    x_mean, y_mean = x.mean(), y.mean()
+    sxx = ((x - x_mean) ** 2).sum()
+    if sxx < 1e-18:
+        return {"error": "Variance du marché nulle"}
 
-    # Alpha annualisé
-    alpha_annualized = intercept * 252
+    beta      = ((x - x_mean) * (y - y_mean)).sum() / sxx
+    alpha     = y_mean - beta * x_mean
+    residuals = y - (alpha + beta * x)
+    ss_res    = (residuals ** 2).sum()
+    ss_tot    = ((y - y_mean) ** 2).sum()
+    r2        = 1 - ss_res / ss_tot if ss_tot > 0 else 0.0
 
-    # t-stat de l'alpha
-    t_stat = intercept / (std_err + 1e-9)
+    sigma2   = ss_res / (n - 2)
+    se_alpha = np.sqrt(sigma2 * (1 / n + x_mean ** 2 / sxx))
+
+    if se_alpha < 1e-15:
+        t_stat = 0.0 if abs(alpha) < 1e-15 else np.inf
+    else:
+        t_stat = alpha / se_alpha
+    p_value = float(2 * (1 - stats.t.cdf(abs(t_stat), df=n - 2)))
 
     return {
-        "alpha (annualisé %)":  round(alpha_annualized * 100, 2),
-        "beta":                 round(slope, 3),
-        "R²":                   round(r_value**2, 4),
+        "alpha (annualisé %)":  round(alpha * 252 * 100, 2),
+        "beta":                 round(float(beta), 3),
+        "R²":                   round(float(r2), 4),
         "p-value alpha":        round(p_value, 4),
-        "t-stat alpha":         round(t_stat, 3),
+        "t-stat alpha":         round(float(t_stat), 3),
         "alpha significatif":   p_value < 0.05,
-        "nb observations":      len(combined),
+        "nb observations":      n,
     }

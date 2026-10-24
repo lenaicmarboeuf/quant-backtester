@@ -249,6 +249,11 @@ def combine_signals(
         raise ValueError(f"weights_mode inconnu : '{weights_mode}'. "
                          f"Choisir parmi : 'equal', 'fixed', 'ic', 'icir'")
 
+    # ANTI LOOK-AHEAD : l'IC à la date T utilise forward_returns[T] = rendement
+    # de T+1, inconnu à la clôture de T. On décale donc les poids d'un jour :
+    # le poids de T n'utilise que l'IC calculé jusqu'à T-1.
+    weights_df = weights_df.shift(1)
+
     # Application des poids dynamiques signal par signal
     # weights_df a le même index que les IC (moins les premières valeurs NaN)
     all_signals_df = pd.DataFrame(signals)

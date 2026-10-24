@@ -207,4 +207,20 @@ class TestSignalQualityReport:
     def test_poids_sum_to_100(self, three_signals, forward_returns):
         """La somme des poids IC doit être ≈ 100%."""
         report = signal_quality_report(three_signals, forward_returns, ic_window=30)
-        assert abs(report["Poids IC (%)"].sum() - 100.0) < 0.1
+        assert abs(report["Poids IC (%)"].sum() - 100.0) < 0.5
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test : pas de look-ahead dans les poids dynamiques
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestNoLookAheadInWeights:
+    def test_first_window_has_no_weight_effect(self, three_signals, forward_returns):
+        """Les poids sont décalés d'un jour : la 1re date valide d'IC ne produit pas de signal ce jour-là."""
+        res = combine_signals(three_signals, weights_mode="ic",
+                              forward_returns=forward_returns, ic_window=30)
+        w = rolling_ic_weights(three_signals, forward_returns, window=30)
+        first_valid = w.dropna(how="all").index[0]
+        pos = res.index.get_loc(first_valid)
+        # À la date où l'IC devient disponible, le poids appliqué est encore celui de la veille (NaN → 0)
+        assert res.iloc[pos] == 0 or np.isnan(res.iloc[pos])

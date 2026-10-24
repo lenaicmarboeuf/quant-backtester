@@ -203,7 +203,8 @@ class TestComputeICIR:
     def test_stable_signal_higher_icir(self):
         """Un IC régulier doit avoir un ICIR plus élevé qu'un IC erratique."""
         dates = pd.date_range("2020-01-01", periods=200, freq="B")
-        stable   = pd.Series(np.full(200, 0.08), index=dates)           # IC = 0.08 tous les jours
+        np.random.seed(0)
+        stable   = pd.Series(0.08 + np.random.normal(0, 0.005, 200), index=dates)  # IC ≈ 0.08, très régulier
         erratic  = pd.Series(np.random.choice([-0.1, 0.2], 200), index=dates)  # IC aléatoire
 
         icir_stable  = compute_icir(stable).dropna()
@@ -243,6 +244,27 @@ class TestFamaFrenchAlpha:
         assert abs(result["alpha (annualisé %)"])  < 0.1
 
     def test_insufficient_data(self):
-        r_short = pd.Series([0.01, 0.02, -0.01], index=pd.date_range("2020-01-01", 3))
+        r_short = pd.Series([0.01, 0.02, -0.01], index=pd.date_range("2020-01-01", periods=3))
         result = fama_french_alpha(r_short, r_short)
         assert "error" in result
+
+
+    def test_alpha_pvalue_is_about_intercept(self):
+        """Alpha constant + beta=1 + peu de bruit → alpha significatif."""
+        np.random.seed(1)
+        mkt = pd.Series(np.random.normal(0.0004, 0.01, 800),
+                        index=pd.date_range("2020-01-01", periods=800, freq="B"))
+        strat = mkt + 0.001 + np.random.normal(0, 0.002, 800)
+        res = fama_french_alpha(strat, mkt)
+        assert res["alpha significatif"] is True or res["alpha significatif"] == True
+        assert abs(res["beta"] - 1.0) < 0.1
+
+    def test_no_alpha_when_pure_beta(self):
+        """Stratégie = 1.5 × marché + bruit, sans alpha → alpha non significatif."""
+        np.random.seed(2)
+        mkt = pd.Series(np.random.normal(0.0004, 0.01, 800),
+                        index=pd.date_range("2020-01-01", periods=800, freq="B"))
+        strat = 1.5 * mkt + np.random.normal(0, 0.004, 800)
+        res = fama_french_alpha(strat, mkt)
+        assert res["p-value alpha"] > 0.05
+        assert abs(res["beta"] - 1.5) < 0.1
