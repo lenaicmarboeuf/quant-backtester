@@ -5,9 +5,16 @@ des données de test. Le décorateur @pytest.fixture les enregistre
 auprès de pytest, qui les injecte automatiquement dans les tests
 qui les demandent (par leur nom en argument).
 """
+import sys
+from pathlib import Path
+
 import pytest
 import pandas as pd
 import numpy as np
+
+# Séance 9 : permet d'importer `backtester` quel que soit le dossier d'où
+# on lance pytest.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 # ── Données synthétiques déterministes ──────────────────────────────────────
 # np.random.seed() : fixe la graine du générateur aléatoire.
@@ -58,3 +65,53 @@ def ohlcv_df(price_series) -> pd.DataFrame:
     }, index=close.index)
     df["returns"] = df["Close"].pct_change()
     return df
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SÉANCE 9 — fixtures multi-actifs (long/short, pairs, PortfolioBacktester)
+# Utilisent un générateur local (default_rng) : n'interfèrent pas avec
+# np.random.seed() des fixtures ci-dessus.
+# ═════════════════════════════════════════════════════════════════════════════
+
+@pytest.fixture
+def dates() -> pd.DatetimeIndex:
+    """600 jours ouvrés."""
+    return pd.bdate_range("2020-01-01", periods=600)
+
+
+@pytest.fixture
+def market(dates) -> pd.Series:
+    """Rendements d'un « marché » simulé (équivalent SPY)."""
+    rng = np.random.default_rng(0)
+    return pd.Series(rng.normal(0.0004, 0.01, len(dates)), index=dates, name="SPY")
+
+
+@pytest.fixture
+def universe(dates, market):
+    """
+    20 actifs : r_i = beta_i × marché + bruit idiosyncratique.
+    Les betas sont étalés de 0.4 à 1.6 pour tester la neutralité beta.
+    Retourne (rendements DataFrame, betas vrais Series).
+    """
+    rng = np.random.default_rng(1)
+    betas = np.linspace(0.4, 1.6, 20)
+    cols = [f"A{i:02d}" for i in range(20)]
+    rets = pd.DataFrame(
+        {c: b * market.values + rng.normal(0, 0.01, len(dates)) for c, b in zip(cols, betas)},
+        index=dates,
+    )
+    return rets, pd.Series(betas, index=cols)
+
+
+@pytest.fixture
+def close_df(universe) -> pd.DataFrame:
+    """Prix de clôture des 20 actifs de `universe`."""
+    rets, _ = universe
+    return 100 * (1 + rets).cumprod()
+
+
+@pytest.fixture
+def single_asset(dates, market) -> pd.DataFrame:
+    """Un seul actif (Close + returns) pour tester le Backtester long/short."""
+    close = 100 * (1 + market).cumprod()
+    return pd.DataFrame({"Close": close, "returns": close.pct_change()}).dropna()

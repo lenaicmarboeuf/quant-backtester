@@ -18,7 +18,7 @@ def sharpe_ratio(returns: pd.Series, periods: int = 252) -> float:
     La volatilité s'annualise par la racine carrée du temps
     (propriété statistique du mouvement brownien).
     """
-    if returns.std() == 0:
+    if returns.std() < 1e-10:
         return 0.0
     return (returns.mean() / returns.std()) * np.sqrt(periods)
 
@@ -118,15 +118,15 @@ def value_at_risk(returns: pd.Series, confidence: float = 0.95) -> float:
 def sortino_ratio(returns: pd.Series, periods: int = 252) -> float:
     """
     Comme Sharpe mais ne pénalise que la volatilité négative.
-    
+
     Pourquoi c'est mieux que Sharpe dans certains cas ?
     Sharpe pénalise la volatilité TOTALE : hausse ET baisse.
     Sortino dit : "une hausse volatile n'est pas un risque."
     Seule la volatilité à la baisse (downside) est du vrai risque.
-    
+
     downside = returns[returns < 0] : garde uniquement les jours perdants
     downside.std()                  : vol des mauvais jours seulement
-    
+
     Sortino > Sharpe → la stratégie a beaucoup de volatilité haussière
     (bonne chose). Sortino ≈ Sharpe → gains et pertes symétriques.
     """
@@ -138,45 +138,60 @@ def sortino_ratio(returns: pd.Series, periods: int = 252) -> float:
 
 def nb_trades(position: pd.Series) -> int:
     """
-    Compte les entrées en position (passages de 0 → valeur positive).
-    
-    position.diff() : différence entre position[j] et position[j-1]
-    > 0             : la position a augmenté = nouvelle entrée en trade
-    
+    Compte les ENTRÉES en position, long ou short (séance 9 : version signée).
+
+    Une entrée = l'un de ces deux événements :
+      1. on passe de 0 (cash) à une position non nulle (long OU short) ;
+      2. la position change de SIGNE (long → short ou short → long) :
+         c'est une sortie + une nouvelle entrée, donc 1 trade.
+
+    L'ancienne version comptait `position.diff() > 0`. Avec des positions
+    négatives c'est faux : passer de 0 à -1 donne diff = -1 → un short
+    n'était JAMAIS compté, et passer de -1 à 0 (rachat) était compté
+    comme une entrée !
+
+    Les ajustements de taille dans le même sens (0.5 → 0.8 long) ne sont
+    PAS de nouveaux trades : c'est le même pari, juste renforcé.
+
     Exemple :
-    position = [0, 0, 1, 1, 0, 0, 1, 1, 1]
-    diff     = [NaN, 0, +1, 0, -1, 0, +1, 0, 0]
-    > 0      = [F, F, T, F, F, F, T, F, F]
-    → 2 trades
-    
+        position = [0, 0, 1, 1, 0, -1, -1, 1, 1]
+        entrées  =    .  .  ✓  .  .  ✓   .  ✓  .   → 3 trades
+
     Pourquoi c'est important ?
     Nb jours tradés = 500 peut vouloir dire 1 trade de 500 jours
     ou 250 trades de 2 jours. Le turnover change tout pour les coûts.
     """
-    return int((position.diff() > 0).sum())
+    pos = position.fillna(0)
+    prev = pos.shift(1).fillna(0)
+    from_flat = (prev == 0) & (pos != 0)
+    flip = (np.sign(prev) * np.sign(pos)) < 0
+    return int((from_flat | flip).sum())
 
 
 
 def full_metrics(returns: pd.Series, equity: pd.Series,
-                 position: pd.Series = None) -> dict:   
+                 position: pd.Series = None) -> dict:
     """
     Calcule toutes les métriques en une seule fois.
     C'est cette fonction qu'on appelle depuis engine.py.
 
     Args:
-        returns : Series des rendements journaliers de la stratégie
-        equity  : Series de la valeur du portefeuille en euros
+        returns  : Series des rendements journaliers de la stratégie
+        equity   : Series de la valeur du portefeuille en euros
+        position : Series des positions (optionnel, signées si long/short).
+                   Si fournie, calcule 'Nb trades'. Séance 9 : engine.py la
+                   passe désormais systématiquement (bug "Nb trades = 0" corrigé).
 
     Returns:
         dict avec toutes les métriques, arrondies proprement
-    """            
+    """
     r = returns.dropna()
     e = equity.ffill().dropna()
-    
+
     metrics = {
         "CAGR (%)":          round(cagr(e) * 100, 2),
         "Sharpe":            round(sharpe_ratio(r), 2),
-        "Sortino":           round(sortino_ratio(r), 2),       
+        "Sortino":           round(sortino_ratio(r), 2),
         "Calmar":            round(calmar_ratio(e), 2),
         "Max Drawdown (%)":  round(max_drawdown(e) * 100, 2),
         "Win Rate (%)":      round(win_rate(r) * 100, 2),
@@ -184,6 +199,6 @@ def full_metrics(returns: pd.Series, equity: pd.Series,
         "VaR 95% (%)":       round(value_at_risk(r) * 100, 2),
         "Capital final (€)": round(e.iloc[-1], 2),
         "Nb jours tradés":   int((returns != 0).sum()),
-        "Nb trades":         nb_trades(position) if position is not None else 0,  
+        "Nb trades":         nb_trades(position) if position is not None else 0,
     }
     return metrics

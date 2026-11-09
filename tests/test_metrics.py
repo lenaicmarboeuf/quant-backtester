@@ -212,10 +212,10 @@ class TestFullMetrics:
     def test_returns_all_keys(self, returns_series, equity_series):
         """full_metrics retourne bien les 9 clés attendues."""
         expected_keys = {
-            "CAGR (%)", "Sharpe", "Calmar", "Max Drawdown (%)",
+            "CAGR (%)", "Sharpe", "Sortino", "Calmar", "Max Drawdown (%)",
             "Win Rate (%)", "Profit Factor", "VaR 95% (%)",
-            "Capital final (€)", "Nb jours tradés",
-        }
+            "Capital final (€)", "Nb jours tradés", "Nb trades",
+}
         result = full_metrics(returns_series, equity_series)
         assert set(result.keys()) == expected_keys
 

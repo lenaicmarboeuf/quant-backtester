@@ -200,12 +200,14 @@ def compute_ic(
     factor: pd.Series,
     forward_returns: pd.Series,
     method: str = "spearman",
-) -> pd.Series:
+) -> float:
     """
-    Information Coefficient (IC) — mesure de qualité d'un signal.
+    Information Coefficient (IC) GLOBAL time-series — mesure de qualité d'un signal.
 
-    L'IC mesure la corrélation entre le signal au jour J et
-    le rendement RÉALISÉ au jour J+1.
+    Renvoie UN SEUL float : la corrélation sur toute la période entre le
+    signal au jour J et le rendement RÉALISÉ au jour J+1.
+    (IC par date → compute_rolling_ic ; IC cross-sectionnel sur N actifs →
+    cross_sectional_ic, séance 9.)
 
     IC = Spearman(signal[J], returns[J+1])
 
@@ -230,20 +232,20 @@ def compute_ic(
         method          : 'spearman' (défaut) ou 'pearson'
 
     Returns:
-        pd.Series des IC journaliers (un float par date)
+        float : IC global (NaN si moins de 10 observations communes)
 
     Exemple :
         close = download_data('AAPL', ...)['Close']
         signal = sma_crossover(close)
         fwd = close.pct_change().shift(-1)  # ← seul shift(-1) autorisé
-        ic_series = compute_ic(signal, fwd)
-        print(f"IC moyen : {ic_series.mean():.4f}")
+        ic = compute_ic(signal, fwd)
+        print(f"IC global : {ic:.4f}")
     """
     # Alignement des deux séries sur les mêmes dates
     combined = pd.DataFrame({"factor": factor, "fwd": forward_returns}).dropna()
 
     if len(combined) < 10:
-        return pd.Series(dtype=float)
+        return float("nan")
 
     if method == "spearman":
         # Corrélation de Spearman point par point sur une fenêtre
@@ -414,4 +416,120 @@ def fama_french_alpha(
         "t-stat alpha":         round(float(t_stat), 3),
         "alpha significatif":   p_value < 0.05,
         "nb observations":      n,
+    }
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 7. IC CROSS-SECTIONNEL (séance 9)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def cross_sectional_ic(
+    factor_df: pd.DataFrame,
+    forward_returns_df: pd.DataFrame,
+    method: str = "spearman",
+    min_assets: int = 5,
+) -> pd.Series:
+    """
+    IC cross-sectionnel : le VRAI IC académique (Grinold & Kahn).
+
+    À CHAQUE DATE T, on calcule la corrélation de rang entre :
+        - les scores du facteur des N actifs à T
+        - leurs rendements futurs (T → T+1)
+        IC_T = Spearman( score_i,T ; fwd_return_i,T )    sur i = 1..N
+
+    On obtient une Series (un IC par date). C'est très différent de l'IC
+    time-series de la séance 8 (un seul actif, corrélation DANS LE TEMPS) :
+        - time-series : "quand le signal est haut, l'actif monte-t-il le lendemain ?"
+        - cross-sectionnel : "parmi N actifs, ceux que le facteur classe en haut
+          battent-ils ceux qu'il classe en bas ?"
+    Seul le second correspond à un portefeuille long/short par quantiles.
+
+    Interprétation (ordres de grandeur réalistes) :
+        IC moyen 0.02–0.05 : facteur typique, déjà exploitable sur beaucoup d'actifs
+        IC moyen > 0.10    : exceptionnel (méfiance : biais ou look-ahead ?)
+        Un IC de 0.03 paraît minuscule mais, avec N paris indépendants,
+        Sharpe ≈ IC × √N (loi fondamentale, avant coûts).
+
+    ⚠ forward_returns_df = close.pct_change().shift(-1) : le SEUL shift(-1)
+    autorisé, pour MESURER a posteriori — jamais pour construire des positions.
+
+    Paramètres
+    ----------
+    factor_df          : DataFrame (dates × actifs) de scores
+    forward_returns_df : DataFrame (dates × actifs) des rendements T→T+1
+    method             : 'spearman' (rangs, robuste) ou 'pearson'
+    min_assets         : nombre minimum d'actifs valides pour calculer l'IC d'une date
+
+    Retourne : pd.Series d'IC indexée par date (NaN si trop peu d'actifs).
+    """
+    f = factor_df.reindex(forward_returns_df.index)
+    r = forward_returns_df.reindex(columns=f.columns)
+
+    valid = f.notna() & r.notna()
+    n = valid.sum(axis=1)
+
+    f_ = f.where(valid)
+    r_ = r.where(valid)
+
+    if method == "spearman":
+        f_ = f_.rank(axis=1)
+        r_ = r_.rank(axis=1)
+    elif method != "pearson":
+        raise ValueError("method doit être 'spearman' ou 'pearson'")
+
+    # Corrélation de Pearson ligne par ligne (sur les rangs si Spearman)
+    f_c = f_.sub(f_.mean(axis=1), axis=0)
+    r_c = r_.sub(r_.mean(axis=1), axis=0)
+    cov = (f_c * r_c).sum(axis=1)
+    den = np.sqrt((f_c ** 2).sum(axis=1) * (r_c ** 2).sum(axis=1))
+    ic = cov / den.replace(0, np.nan)
+    ic[n < min_assets] = np.nan
+    return ic.rename("IC")
+
+
+def cross_sectional_icir(
+    ic_series: pd.Series,
+    window: int = None,
+) -> object:
+    """
+    ICIR cross-sectionnel = moyenne(IC) / écart-type(IC)   [Sharpe du facteur].
+
+    window=None : un seul nombre sur toute la période.
+    window=k    : ICIR glissant (Series).
+
+    Repères : ICIR > 0.5 intéressant ; > 1 excellent (rare en réel).
+    Annualisé : ICIR × √252 si IC journaliers (pour comparer à un Sharpe).
+    """
+    if window is None:
+        ic = ic_series.dropna()
+        if len(ic) < 2 or ic.std() < 1e-12:
+            return float("nan")
+        return float(ic.mean() / ic.std())
+    return ic_series.rolling(window).mean() / ic_series.rolling(window).std().replace(0, np.nan)
+
+
+def ic_summary(ic_series: pd.Series) -> dict:
+    """
+    Résumé d'une série d'IC : moyenne, écart-type, ICIR, t-stat, % de jours positifs.
+
+    t-stat = IC_moyen / (IC_std / √T) : teste H0 "IC moyen = 0".
+    |t| > 2 ≈ significatif à 5 %. Attention : les IC journaliers consécutifs
+    sont auto-corrélés (facteurs lents) → le t-stat est SURESTIMÉ ; pour un
+    facteur rebalancé mensuellement, sous-échantillonner les IC (tous les 21 jours).
+    """
+    ic = ic_series.dropna()
+    if len(ic) < 2:
+        return {"error": "Pas assez d'observations"}
+    std = float(ic.std())
+    mean = float(ic.mean())
+    t = mean / (std / np.sqrt(len(ic))) if std > 1e-12 else float("nan")
+    return {
+        "IC moyen":        round(mean, 4),
+        "IC std":          round(std, 4),
+        "ICIR":            round(mean / std, 3) if std > 1e-12 else float("nan"),
+        "ICIR annualisé":  round(mean / std * np.sqrt(252), 2) if std > 1e-12 else float("nan"),
+        "t-stat":          round(float(t), 2),
+        "IC > 0 (%)":      round(float((ic > 0).mean() * 100), 1),
+        "nb dates":        int(len(ic)),
     }

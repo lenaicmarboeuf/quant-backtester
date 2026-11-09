@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Données et sorties locales
+data/
+*.csv
+*.parquet
+
+# Système / éditeur
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+Untitled*.ipynb
+anaconda_projects/
+Untitled*.ipynb
