@@ -21,3 +21,4 @@ Thumbs.db
 Untitled*.ipynb
 anaconda_projects/
 Untitled*.ipynb
+.pytest_cache/
